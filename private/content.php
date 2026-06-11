@@ -708,8 +708,11 @@ const PACKING={
   tech:[{t:"מתאם חשמל אמריקאי",n:"Type A"},{t:"Power Bank",n:"ל-NYC"},{t:"טאבלט / iPad",n:"לטיסה"},{t:"כרטיס SIM / eSIM",n:"T-Mobile Tourist"},{t:"Waze — הורד offline",n:""}],
   docs:[{t:"דרכונים לכולם — 5 דרכונות",n:"תוקף 6+ חודשים"},{t:"ESTA לכולם כולל הילדים",n:"⚠️ חובה!"},{t:"שובר Sixt 918196",n:""},{t:"אישורי Legoland Hotel",n:""},{t:"כרטיסי Giants vs Vikings",n:""},{t:"ביטוח נסיעות",n:""},{t:"רישיון נהיגה בינלאומי",n:"חובה ל-Sixt"}]
 };
-function loadChecks(k){try{return JSON.parse(localStorage.getItem("pack_"+k)||"[]")}catch{return[]}}
-function saveChecks(k,a){try{localStorage.setItem("pack_"+k,JSON.stringify(a))}catch{}}
+// Checkbox state is stored on the server (shared across all family devices) via api.php.
+let CHECK_STATE={};
+async function loadState(){try{const r=await fetch("api.php?action=state",{credentials:"same-origin"});const j=await r.json();CHECK_STATE=j.checks||{}}catch{CHECK_STATE={}}}
+function loadChecks(k){return Array.isArray(CHECK_STATE[k])?CHECK_STATE[k]:[]}
+function saveChecks(k,a){CHECK_STATE[k]=a;const fd=new FormData();fd.append("key",k);fd.append("data",JSON.stringify(a));fetch("api.php?action=savecheck",{method:"POST",body:fd,credentials:"same-origin"}).catch(()=>{})}
 function renderPacking(){
   [{key:"baby",id:"pack-baby"},{key:"kids",id:"pack-kids"},{key:"clothes",id:"pack-clothes"},{key:"medical",id:"pack-medical"},{key:"tech",id:"pack-tech"},{key:"docs",id:"pack-docs"}]
   .forEach(({key,id})=>{
@@ -717,8 +720,7 @@ function renderPacking(){
     el.innerHTML=items.map((item,i)=>`<div class="check-item ${checked[i]?"done":""}" onclick="toggleCheck('${key}',${i},this)"><div class="check-box">${checked[i]?"✓":""}</div><div><div class="ci-text">${item.t}</div>${item.n?`<div class="ci-note">${item.n}</div>`:""}</div></div>`).join("");
   });
 }
-function toggleCheck(k,i,el){const c=loadChecks(k);c[i]=!c[i];saveChecks(k,c);el.classList.toggle("done");el.querySelector(".check-box").textContent=c[i]?"✓":""}
-renderPacking();
+function toggleCheck(k,i,el){const c=loadChecks(k).slice();c[i]=!c[i];saveChecks(k,c);el.classList.toggle("done");el.querySelector(".check-box").textContent=c[i]?"✓":""}
 
 const TODOS=[
   {t:"ESTA לילדים — מיכאל ותומר",n:"esta.cbp.dhs.gov — חובה!",urgent:true},
@@ -738,29 +740,50 @@ function renderTodos(){
   const el=document.getElementById("todo-list");const checked=loadChecks("todos");
   el.innerHTML=TODOS.map((item,i)=>`<div class="check-item ${checked[i]?"done":""}" onclick="toggleCheck('todos',${i},this)" style="align-items:flex-start">${item.urgent&&!checked[i]?`<span class="urgent-tag">דחוף</span>`:""}<div class="check-box" style="margin-top:0">${checked[i]?"✓":""}</div><div><div class="ci-text">${item.t}</div>${item.n?`<div class="ci-note">${item.n}</div>`:""}</div></div>`).join("");
 }
-renderTodos();
+// Load shared checkbox state from the server, then render. Refresh when the
+// tab regains focus so changes made on another device show up.
+async function initChecks(){await loadState();renderPacking();renderTodos();}
+initChecks();
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)initChecks();});
 
-let docs=[];try{docs=JSON.parse(localStorage.getItem("mani_docs")||"[]")}catch{}
-function saveDocs(){try{localStorage.setItem("mani_docs",JSON.stringify(docs))}catch{}}
+// Documents are stored on the server (shared across all family devices) via api.php.
+const DOCS_API="api.php";
+let docs=[];
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function fileIcon(m){if(!m)return"📄";if(m.includes("pdf"))return"📋";if(m.includes("image"))return"🖼️";if(m.includes("word")||m.includes("document"))return"📝";return"📄"}
 function fmtSz(b){if(b<1024)return b+"B";if(b<1048576)return(b/1024).toFixed(1)+"KB";return(b/1048576).toFixed(1)+"MB"}
 function renderDocs(){
   document.getElementById("emptyDocs").style.display=docs.length?"none":"block";
-  document.getElementById("docList").innerHTML=docs.map((d,i)=>`<div class="doc-item"><div class="doc-icon">${fileIcon(d.mime)}</div><div class="doc-info"><div class="doc-name">${d.name}</div><div class="doc-meta">${fmtSz(d.size)} · ${d.date}</div></div><button class="dbtn bdl" onclick="dlDoc(${i})">הורדה</button><button class="dbtn bdel" onclick="delDoc(${i})">✕</button></div>`).join("");
+  document.getElementById("docList").innerHTML=docs.map(d=>`<div class="doc-item"><div class="doc-icon">${fileIcon(d.mime)}</div><div class="doc-info"><div class="doc-name">${esc(d.name)}</div><div class="doc-meta">${fmtSz(d.size)} · ${esc(d.date)}</div></div><a class="dbtn bdl" href="${DOCS_API}?action=download&id=${encodeURIComponent(d.id)}" target="_blank" rel="noopener">הורדה</a><button class="dbtn bdel" onclick="delDoc('${esc(d.id)}')">✕</button></div>`).join("");
 }
-function dlDoc(i){const a=document.createElement("a");a.href=docs[i].data;a.download=docs[i].name;a.click()}
-function delDoc(i){docs.splice(i,1);saveDocs();renderDocs()}
+async function loadDocs(){
+  try{const r=await fetch(DOCS_API+"?action=list",{credentials:"same-origin"});const j=await r.json();docs=j.docs||[];}catch{docs=[]}
+  renderDocs();
+}
+async function delDoc(id){
+  if(!confirm("למחוק את המסמך?"))return;
+  const fd=new FormData();fd.append("id",id);
+  try{const r=await fetch(DOCS_API+"?action=delete",{method:"POST",body:fd,credentials:"same-origin"});const j=await r.json();if(j.docs){docs=j.docs;renderDocs();}}catch{alert("מחיקה נכשלה")}
+}
 async function handleFiles(files){
+  if(!files.length)return;
   document.getElementById("dzIcon").textContent="⏳";
-  for(const f of files){const data=await new Promise(res=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.readAsDataURL(f)});docs.push({name:f.name,mime:f.type,size:f.size,data,date:new Date().toLocaleDateString("he-IL")})}
-  saveDocs();renderDocs();document.getElementById("dzIcon").textContent="✅";setTimeout(()=>document.getElementById("dzIcon").textContent="📂",1500);
+  const fd=new FormData();
+  for(const f of files)fd.append("file[]",f,f.name);
+  try{
+    const r=await fetch(DOCS_API+"?action=upload",{method:"POST",body:fd,credentials:"same-origin"});
+    const j=await r.json();
+    if(j.error){document.getElementById("dzIcon").textContent="⚠️";alert(j.error==="too_large"?"קובץ גדול מדי (מקסימום 25MB)":"העלאה נכשלה");}
+    else{docs=j.docs||docs;renderDocs();document.getElementById("dzIcon").textContent="✅";}
+  }catch{document.getElementById("dzIcon").textContent="⚠️";alert("העלאה נכשלה");}
+  setTimeout(()=>document.getElementById("dzIcon").textContent="📂",1500);
 }
 const dz=document.getElementById("dropZone");
 dz.addEventListener("dragover",e=>{e.preventDefault();dz.classList.add("active")});
 dz.addEventListener("dragleave",()=>dz.classList.remove("active"));
 dz.addEventListener("drop",e=>{e.preventDefault();dz.classList.remove("active");handleFiles([...e.dataTransfer.files])});
 document.getElementById("fileInput").addEventListener("change",e=>handleFiles([...e.target.files]));
-renderDocs();
+loadDocs();
 </script>
 </body>
 </html>

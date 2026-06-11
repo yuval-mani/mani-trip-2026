@@ -9,23 +9,11 @@
 
 declare(strict_types=1);
 
-require __DIR__ . '/../private/config.php';
+require __DIR__ . '/../private/auth.php';
 
-// --- Secure session ----------------------------------------------------------
-$https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-    || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+mani_session_start();
 
-session_name('mani_session');
-session_set_cookie_params([
-    'lifetime' => 0,
-    'path'     => '/',
-    'secure'   => $https,
-    'httponly' => true,
-    'samesite' => 'Lax',
-]);
-session_start();
-
-$authed = !empty($_SESSION['mani_auth']);
+$authed = mani_is_authed();
 $error  = '';
 
 // --- Logout ------------------------------------------------------------------

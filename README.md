@@ -44,6 +44,20 @@ index.html               ← ORIGINAL reference only. Do NOT deploy to the web r
 > at `/index.html`. Keep it out of `public/` (it currently lives in the repo root, which
 > is *not* the public path when Public Path = `public`).
 
+## Shared data (documents + checkboxes)
+
+Both now live on the **server**, behind the same login, so they're consistent
+across every family device (no longer per-browser localStorage):
+
+- **Documents** — uploaded via `public/api.php` and stored in `private/uploads/`
+  (outside the web root, never directly reachable or executable). Max 25 MB/file.
+- **Checkbox state** — packing list + to-do list saved in `private/state.json`.
+
+These require `private/` to be **writable by the PHP-FPM user** (it writes
+`uploads/`, `state.json`, and `.throttle.json`). On RunCloud the app runs as its
+own system user, so this works out of the box. `uploads/` and `state.json` are
+runtime data and are gitignored — they live on the server, not in the repo.
+
 ## Notes
 
 - Session cookie is HttpOnly + SameSite=Lax, and `Secure` when served over HTTPS.
